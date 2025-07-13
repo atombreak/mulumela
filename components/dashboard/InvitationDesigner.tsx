@@ -138,6 +138,12 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showNewProjectForm, setShowNewProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(true);
+  const [autoSaveInterval, setAutoSaveInterval] = useState(30000); // 30 seconds
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error' | 'unsaved'>('saved');
+  const [lastAutoSave, setLastAutoSave] = useState<Date | null>(null);
+  const [isLoadingProject, setIsLoadingProject] = useState(false);
+  const [projectLoadError, setProjectLoadError] = useState<string | null>(null);
 
   // Text properties
   const [textProperties, setTextProperties] = useState({
@@ -164,6 +170,13 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
       y1: 0,
       x2: 0,
       y2: 1
+    },
+    image: {
+      src: '',
+      opacity: 1,
+      position: 'center',
+      size: 'cover',
+      repeat: 'no-repeat'
     }
   });
 
@@ -1374,10 +1387,25 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
     }
   };
 
+  const autoSaveProject = async () => {
+    if (!canvas || !currentProject || isSaving) return;
+
+    setSaveStatus('saving');
+    try {
+      await saveCurrentProject();
+      setLastAutoSave(new Date());
+      setSaveStatus('saved');
+    } catch (error) {
+      setSaveStatus('error');
+      console.error('Auto-save failed:', error);
+    }
+  };
+
   const saveCurrentProject = async (options: { saveAs?: boolean; name?: string } = {}) => {
     if (!canvas) return;
 
     setIsSaving(true);
+    setSaveStatus('saving');
     try {
       // Generate thumbnail
       const thumbnail = canvas.toDataURL({
@@ -1405,6 +1433,8 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
         backgroundColor: backgroundProperties.color,
         backgroundType: backgroundProperties.type,
         backgroundGradient: backgroundProperties.gradient,
+        backgroundImage: backgroundProperties.image.src,
+        backgroundImageSettings: backgroundProperties.image,
         thumbnail
       };
 
@@ -1421,6 +1451,7 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
           setCurrentProject(data.project);
           setHasUnsavedChanges(false);
           setLastSaved(new Date());
+          setSaveStatus('saved');
           toast.success('Project created successfully');
           loadProjects();
         } else {
@@ -1439,6 +1470,7 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
           setCurrentProject(data.project);
           setHasUnsavedChanges(false);
           setLastSaved(new Date());
+          setSaveStatus('saved');
           toast.success('Project saved successfully');
           loadProjects();
         } else {
@@ -1447,6 +1479,7 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
       }
     } catch (error) {
       console.error('Error saving project:', error);
+      setSaveStatus('error');
       toast.error('Failed to save project');
     } finally {
       setIsSaving(false);
@@ -1454,6 +1487,9 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
   };
 
   const loadProject = async (projectId: string) => {
+    setIsLoadingProject(true);
+    setProjectLoadError(null);
+    
     try {
       const response = await fetch(`/api/invitation-projects/${projectId}`);
       if (response.ok) {
@@ -1473,11 +1509,29 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
             setBackgroundProperties({
               type: project.backgroundType,
               color: project.backgroundColor,
-              gradient: project.backgroundGradient || backgroundProperties.gradient
+              gradient: project.backgroundGradient || backgroundProperties.gradient,
+              image: project.backgroundImageSettings ? {
+                src: project.backgroundImage || '',
+                opacity: project.backgroundImageSettings.opacity || 1,
+                position: project.backgroundImageSettings.position || 'center',
+                size: project.backgroundImageSettings.size || 'cover',
+                repeat: project.backgroundImageSettings.repeat || 'no-repeat'
+              } : backgroundProperties.image
             });
             
             // Apply background
-            changeBackground(project.backgroundType, project.backgroundColor);
+            if (project.backgroundType === 'image' && project.backgroundImage) {
+              const imageSettings = project.backgroundImageSettings || {
+                src: project.backgroundImage,
+                opacity: 1,
+                position: 'center',
+                size: 'cover',
+                repeat: 'no-repeat'
+              };
+              applyBackgroundImage(imageSettings);
+            } else {
+              changeBackground(project.backgroundType, project.backgroundColor);
+            }
             
             // Restore other properties if available
             if (project.designData.textProperties) {
@@ -1492,13 +1546,21 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
         setCurrentProject(project);
         setHasUnsavedChanges(false);
         setLastSaved(new Date(project.updatedAt));
+        setSaveStatus('saved');
+        
+        // Save to localStorage for recovery
+        localStorage.setItem('lastOpenedProject', project.id);
+        
         toast.success(`Loaded project: ${project.name}`);
       } else {
         throw new Error('Failed to load project');
       }
     } catch (error) {
       console.error('Error loading project:', error);
+      setProjectLoadError('Failed to load project. It may have been deleted or corrupted.');
       toast.error('Failed to load project');
+    } finally {
+      setIsLoadingProject(false);
     }
   };
 
@@ -1533,6 +1595,13 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
         y1: 0,
         x2: 0,
         y2: 1
+      },
+      image: {
+        src: '',
+        opacity: 1,
+        position: 'center',
+        size: 'cover',
+        repeat: 'no-repeat'
       }
     });
     
@@ -1566,6 +1635,14 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
         backgroundColor: '#ffffff',
         backgroundType: 'color',
         backgroundGradient: backgroundProperties.gradient,
+        backgroundImage: '',
+        backgroundImageSettings: {
+          src: '',
+          opacity: 1,
+          position: 'center',
+          size: 'cover',
+          repeat: 'no-repeat'
+        },
         thumbnail
       };
 
@@ -1648,6 +1725,7 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
     if (canvas && currentProject) {
       const handleCanvasChange = () => {
         setHasUnsavedChanges(true);
+        setSaveStatus('unsaved');
       };
 
       canvas.on('object:added', handleCanvasChange);
@@ -1664,15 +1742,51 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
     }
   }, [canvas, currentProject]);
 
-  // Load projects on component mount
+  // Periodic auto-save
   useEffect(() => {
-    loadProjects();
-  }, []);
+    if (!currentProject || !hasUnsavedChanges || !autoSaveEnabled) return;
 
-  // Show project dialog when no current project
-  // Load projects on component mount
+    const autoSaveTimer = setInterval(() => {
+      if (hasUnsavedChanges && !isSaving) {
+        autoSaveProject();
+      }
+    }, autoSaveInterval);
+
+    return () => clearInterval(autoSaveTimer);
+  }, [currentProject, hasUnsavedChanges, autoSaveEnabled, autoSaveInterval, isSaving]);
+
+  // Save before page unload
   useEffect(() => {
-    loadProjects();
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+        return 'You have unsaved changes. Are you sure you want to leave?';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges]);
+
+  // Load projects on component mount and restore last opened project
+  useEffect(() => {
+    const initializeProjects = async () => {
+      await loadProjects();
+      
+      // Try to restore last opened project
+      const lastProjectId = localStorage.getItem('lastOpenedProject');
+      if (lastProjectId && !currentProject) {
+        try {
+          await loadProject(lastProjectId);
+        } catch (error) {
+          console.error('Failed to restore last project:', error);
+          localStorage.removeItem('lastOpenedProject');
+        }
+      }
+    };
+    
+    initializeProjects();
   }, []);
 
   // Render layers panel content
@@ -1837,7 +1951,7 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
   };
 
   // Change background
-  const changeBackground = (type: string, value: any, gradientProperty?: string) => {
+  const changeBackground = (type: string, value: any, gradientProperty?: string, imageProperty?: string) => {
     if (!canvas) return;
 
     try {
@@ -1872,10 +1986,113 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
             saveState();
           }
         }
+      } else if (type === 'image') {
+        if (imageProperty) {
+          setBackgroundProperties(prev => ({
+            ...prev,
+            image: { ...prev.image, [imageProperty]: value }
+          }));
+          
+          // Apply the image with updated properties
+          const updatedImageProps = { ...backgroundProperties.image, [imageProperty]: value };
+          applyBackgroundImage(updatedImageProps);
+        } else {
+          // Full image update
+          applyBackgroundImage(value);
+        }
       }
     } catch (error) {
       console.error('Error changing background:', error);
     }
+  };
+
+  const applyBackgroundImage = (imageProps: any) => {
+    if (!canvas || !imageProps.src) return;
+
+    fabric.Image.fromURL(imageProps.src, (img: any) => {
+      // Calculate scaling to cover the entire canvas
+      const canvasAspect = canvasSize.width / canvasSize.height;
+      const imageAspect = img.width / img.height;
+      
+      let scaleX, scaleY;
+      
+      if (imageProps.size === 'cover') {
+        if (canvasAspect > imageAspect) {
+          scaleX = canvasSize.width / img.width;
+          scaleY = scaleX;
+        } else {
+          scaleY = canvasSize.height / img.height;
+          scaleX = scaleY;
+        }
+      } else if (imageProps.size === 'contain') {
+        if (canvasAspect > imageAspect) {
+          scaleY = canvasSize.height / img.height;
+          scaleX = scaleY;
+        } else {
+          scaleX = canvasSize.width / img.width;
+          scaleY = scaleX;
+        }
+      } else if (imageProps.size === 'stretch') {
+        scaleX = canvasSize.width / img.width;
+        scaleY = canvasSize.height / img.height;
+      } else {
+        scaleX = 1;
+        scaleY = 1;
+      }
+
+      img.set({
+        scaleX: scaleX,
+        scaleY: scaleY,
+        opacity: imageProps.opacity,
+        selectable: false,
+        evented: false,
+      });
+
+      // Position the image
+      if (imageProps.position === 'center') {
+        img.set({
+          left: (canvasSize.width - img.width * scaleX) / 2,
+          top: (canvasSize.height - img.height * scaleY) / 2,
+        });
+      } else if (imageProps.position === 'top-left') {
+        img.set({ left: 0, top: 0 });
+      } else if (imageProps.position === 'top-right') {
+        img.set({ left: canvasSize.width - img.width * scaleX, top: 0 });
+      } else if (imageProps.position === 'bottom-left') {
+        img.set({ left: 0, top: canvasSize.height - img.height * scaleY });
+      } else if (imageProps.position === 'bottom-right') {
+        img.set({ 
+          left: canvasSize.width - img.width * scaleX, 
+          top: canvasSize.height - img.height * scaleY 
+        });
+      }
+
+      canvas.setBackgroundImage(img, canvas.renderAll.bind(canvas));
+      setBackgroundProperties(prev => ({ ...prev, image: imageProps, type: 'image' }));
+      saveState();
+    });
+  };
+
+  const uploadBackgroundImage = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = (e: any) => {
+      const file = e.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = (event: any) => {
+          const imageData = event.target.result;
+          setBackgroundProperties(prev => ({
+            ...prev,
+            image: { ...prev.image, src: imageData }
+          }));
+          applyBackgroundImage({ ...backgroundProperties.image, src: imageData });
+        };
+        reader.readAsDataURL(file);
+      }
+    };
+    input.click();
   };
 
   // Delete selected object
@@ -2088,13 +2305,40 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
           {/* Projects Grid */}
           {projects.length > 0 ? (
             <div>
-              <h2 className="text-xl font-semibold text-gray-900 mb-4">Your Projects</h2>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-gray-900">Your Projects</h2>
+                {isLoadingProject && (
+                  <div className="flex items-center text-sm text-blue-600">
+                    <div className="w-4 h-4 animate-spin rounded-full border border-blue-600 border-t-transparent mr-2" />
+                    Loading project...
+                  </div>
+                )}
+              </div>
+              
+              {projectLoadError && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      <div className="w-4 h-4 bg-red-500 rounded-full mr-2" />
+                      <span className="text-sm text-red-800">{projectLoadError}</span>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setProjectLoadError(null)}
+                    >
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+              
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {projects.map((project) => (
                   <div 
                     key={project.id} 
-                    className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow cursor-pointer"
-                    onClick={() => loadProject(project.id)}
+                    className={`bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow cursor-pointer ${isLoadingProject ? 'opacity-50 pointer-events-none' : ''}`}
+                    onClick={() => !isLoadingProject && loadProject(project.id)}
                   >
                     {/* Project Thumbnail */}
                     <div className="h-48 bg-gray-100 flex items-center justify-center">
@@ -2181,7 +2425,35 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
       <div className="w-80 bg-white border-r border-gray-200 overflow-y-auto">
         <div className="p-4">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold">Design Tools</h3>
+            <div className="flex items-center space-x-3">
+              <h3 className="text-lg font-semibold">Design Tools</h3>
+              <div className="flex items-center space-x-2">
+                {saveStatus === 'saving' && (
+                  <div className="flex items-center text-xs text-blue-600">
+                    <div className="w-3 h-3 animate-spin rounded-full border border-blue-600 border-t-transparent mr-1" />
+                    Saving...
+                  </div>
+                )}
+                {saveStatus === 'saved' && (
+                  <div className="flex items-center text-xs text-green-600">
+                    <div className="w-3 h-3 rounded-full bg-green-600 mr-1" />
+                    Saved {lastSaved && `at ${lastSaved.toLocaleTimeString()}`}
+                  </div>
+                )}
+                {saveStatus === 'error' && (
+                  <div className="flex items-center text-xs text-red-600">
+                    <div className="w-3 h-3 rounded-full bg-red-600 mr-1" />
+                    Save failed
+                  </div>
+                )}
+                {saveStatus === 'unsaved' && (
+                  <div className="flex items-center text-xs text-yellow-600">
+                    <div className="w-3 h-3 rounded-full bg-yellow-600 mr-1" />
+                    Unsaved changes
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="flex space-x-2">
               <Dialog open={showShortcuts} onOpenChange={setShowShortcuts}>
                 <DialogTrigger asChild>
@@ -2605,6 +2877,7 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
                           <SelectContent>
                             <SelectItem value="color">Solid Color</SelectItem>
                             <SelectItem value="gradient">Gradient</SelectItem>
+                            <SelectItem value="image">Background Image</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -2726,6 +2999,100 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
                               />
                             </div>
                           </div>
+                        </div>
+                      )}
+
+                      {backgroundProperties.type === 'image' && (
+                        <div className="space-y-3">
+                          <div>
+                            <Label className="text-xs text-gray-500">Background Image</Label>
+                            <div className="mt-1 space-y-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={uploadBackgroundImage}
+                                className="w-full"
+                              >
+                                <Upload className="w-3 h-3 mr-2" />
+                                Upload Image
+                              </Button>
+                              {backgroundProperties.image.src && (
+                                <div className="relative">
+                                  <img 
+                                    src={backgroundProperties.image.src} 
+                                    alt="Background preview" 
+                                    className="w-full h-20 object-cover rounded border"
+                                  />
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => changeBackground('image', { ...backgroundProperties.image, src: '' })}
+                                    className="absolute top-1 right-1 h-6 w-6 p-0 bg-white/80 hover:bg-white"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {backgroundProperties.image.src && (
+                            <>
+                              <div>
+                                <Label className="text-xs text-gray-500">Image Size</Label>
+                                <Select
+                                  value={backgroundProperties.image.size}
+                                  onValueChange={(value) => changeBackground('image', value, undefined, 'size')}
+                                >
+                                  <SelectTrigger className="h-8 mt-1">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="cover">Cover</SelectItem>
+                                    <SelectItem value="contain">Contain</SelectItem>
+                                    <SelectItem value="stretch">Stretch</SelectItem>
+                                    <SelectItem value="original">Original Size</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div>
+                                <Label className="text-xs text-gray-500">Position</Label>
+                                <Select
+                                  value={backgroundProperties.image.position}
+                                  onValueChange={(value) => changeBackground('image', value, undefined, 'position')}
+                                >
+                                  <SelectTrigger className="h-8 mt-1">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="center">Center</SelectItem>
+                                    <SelectItem value="top-left">Top Left</SelectItem>
+                                    <SelectItem value="top-right">Top Right</SelectItem>
+                                    <SelectItem value="bottom-left">Bottom Left</SelectItem>
+                                    <SelectItem value="bottom-right">Bottom Right</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              <div>
+                                <Label className="text-xs text-gray-500">Opacity</Label>
+                                <Slider
+                                  value={[backgroundProperties.image.opacity]}
+                                  onValueChange={(value) => changeBackground('image', value[0], undefined, 'opacity')}
+                                  max={1}
+                                  min={0}
+                                  step={0.1}
+                                  className="mt-1"
+                                />
+                                <div className="flex justify-between text-xs text-gray-400 mt-1">
+                                  <span>0%</span>
+                                  <span>{Math.round(backgroundProperties.image.opacity * 100)}%</span>
+                                  <span>100%</span>
+                                </div>
+                              </div>
+                            </>
+                          )}
                         </div>
                       )}
                     </div>

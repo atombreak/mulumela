@@ -141,8 +141,10 @@ model InvitationProject {
   
   // Background settings
   backgroundColor String @default("#ffffff")
-  backgroundType  String @default("color") // "color" or "gradient"
+  backgroundType  String @default("color") // "color", "gradient", or "image"
   backgroundGradient Json? // Gradient configuration if backgroundType is "gradient"
+  backgroundImage String? // Base64 encoded image or URL for background image
+  backgroundImageSettings Json? // Image settings (position, size, opacity, etc.)
   
   // Project status
   isTemplate   Boolean  @default(false) // Whether this is a template

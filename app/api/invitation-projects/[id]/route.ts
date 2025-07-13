@@ -127,6 +127,8 @@ export async function PUT(
       'backgroundColor',
       'backgroundType',
       'backgroundGradient',
+      'backgroundImage',
+      'backgroundImageSettings',
       'isTemplate',
       'isPublic',
       'tags',
