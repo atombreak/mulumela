@@ -2095,17 +2095,47 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
     input.click();
   };
 
-  // Delete selected object
+  // Get currently selected objects (single or multiple)
+  const getSelectedObjects = () => {
+    if (!canvas) return [];
+    const activeObject = canvas.getActiveObject();
+    if (!activeObject) return [];
+    
+    if (activeObject.type === 'activeSelection') {
+      // Return array of objects in the active selection
+      return activeObject.getObjects();
+    }
+    // Return array with single selected object
+    return [activeObject];
+  };
+
+  // Delete selected object(s)
   const deleteSelected = () => {
-    if (!canvas || !selectedObject) return;
+    if (!canvas) return;
     
     try {
-      canvas.remove(selectedObject);
+      const selectedObjects = getSelectedObjects();
+      if (selectedObjects.length === 0) return;
+
+      // If multiple objects are selected
+      if (selectedObjects.length > 1) {
+        selectedObjects.forEach((obj: any) => {
+          canvas.remove(obj);
+        });
+        toast.success(`Deleted ${selectedObjects.length} objects`);
+      } else {
+        // Single object deletion
+        canvas.remove(selectedObjects[0]);
+        toast.success('Object deleted');
+      }
+
+      canvas.discardActiveObject();
       canvas.renderAll();
       setSelectedObject(null);
       saveState();
     } catch (error) {
-      console.error('Error deleting object:', error);
+      console.error('Error deleting object(s):', error);
+      toast.error('Failed to delete object(s)');
     }
   };
 
