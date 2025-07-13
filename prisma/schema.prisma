@@ -25,6 +25,7 @@ model User {
   events   Event[]
   guests   Guest[]
   sentMessages SentMessage[]
+  invitationProjects InvitationProject[]
 
   @@map("users")
 }
@@ -122,4 +123,42 @@ model Traffic {
   updatedAt DateTime @updatedAt
 
   @@map("traffic")
+}
+
+model InvitationProject {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String?
+  thumbnail   String?  // Base64 image or URL to preview image
+  
+  // Design data (stored as JSON)
+  designData  Json     // Canvas size, background, objects, layers, etc.
+  
+  // Canvas settings
+  canvasWidth  Int     @default(600)
+  canvasHeight Int     @default(800)
+  canvasRotation Int   @default(0)
+  
+  // Background settings
+  backgroundColor String @default("#ffffff")
+  backgroundType  String @default("color") // "color" or "gradient"
+  backgroundGradient Json? // Gradient configuration if backgroundType is "gradient"
+  
+  // Project status
+  isTemplate   Boolean  @default(false) // Whether this is a template
+  isPublic     Boolean  @default(false) // Whether this is public/shared
+  tags         String[] @default([])    // Tags for categorization
+  
+  // Metadata
+  lastOpenedAt DateTime?
+  version      Int      @default(1)     // For version control
+  
+  createdBy    String   @db.ObjectId
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  user User @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@map("invitation_projects")
 } 

@@ -51,7 +51,10 @@ import {
   MousePointer,
   Clipboard,
   ClipboardPaste,
-  Paintbrush
+  Paintbrush,
+  FolderOpen,
+  FileText,
+  Clock
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -117,6 +120,24 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
   });
   const [clipboard, setClipboard] = useState<any>(null);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  
+  // Draggable layers panel state
+  const [layersPanel, setLayersPanel] = useState({
+    isDraggable: false,
+    position: { x: 100, y: 100 },
+    isDragging: false,
+    dragOffset: { x: 0, y: 0 }
+  });
+
+  // Project management state
+  const [currentProject, setCurrentProject] = useState<any>(null);
+  const [projects, setProjects] = useState<any[]>([]);
+  const [showProjectDialog, setShowProjectDialog] = useState(false); // No longer used
+  const [isSaving, setIsSaving] = useState(false);
+  const [lastSaved, setLastSaved] = useState<Date | null>(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [showNewProjectForm, setShowNewProjectForm] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
 
   // Text properties
   const [textProperties, setTextProperties] = useState({
@@ -506,6 +527,12 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
       });
 
       fabricCanvas.add(title, dateTime, guestNameText, message);
+      
+      // Ensure all text elements are on top layers
+      [title, dateTime, guestNameText, message].forEach(textObj => {
+        fabricCanvas.bringToFront(textObj);
+      });
+      
       fabricCanvas.renderAll();
       
       // Save initial state
@@ -569,7 +596,7 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
     }
   };
 
-  // Add text
+  // Add text (automatically brings to front)
   const addText = (text: string = 'New Text') => {
     if (!canvas || typeof fabric === 'undefined') return;
 
@@ -586,9 +613,11 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
       });
 
       canvas.add(textObject);
+      canvas.bringToFront(textObject); // Automatically bring text to front
       canvas.setActiveObject(textObject);
       canvas.renderAll();
       saveState();
+      toast.success('Text added to top layer');
     } catch (error) {
       console.error('Error adding text:', error);
     }
@@ -1024,6 +1053,7 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
       canvas.bringToFront(selectedObject);
       canvas.renderAll();
       saveState();
+      toast.success('Object brought to front');
     } catch (error) {
       console.error('Error bringing to front:', error);
     }
@@ -1037,8 +1067,69 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
       canvas.sendToBack(selectedObject);
       canvas.renderAll();
       saveState();
+      toast.success('Object sent to back');
     } catch (error) {
       console.error('Error sending to back:', error);
+    }
+  };
+
+  // Move object up one layer
+  const moveUpOneLayer = () => {
+    if (!canvas || !selectedObject) return;
+
+    try {
+      canvas.bringForward(selectedObject);
+      canvas.renderAll();
+      saveState();
+      toast.success('Object moved up one layer');
+    } catch (error) {
+      console.error('Error moving up one layer:', error);
+    }
+  };
+
+  // Move object down one layer
+  const moveDownOneLayer = () => {
+    if (!canvas || !selectedObject) return;
+
+    try {
+      canvas.sendBackwards(selectedObject);
+      canvas.renderAll();
+      saveState();
+      toast.success('Object moved down one layer');
+    } catch (error) {
+      console.error('Error moving down one layer:', error);
+    }
+  };
+
+  // Get object layer information
+  const getObjectLayerInfo = (obj: any) => {
+    if (!canvas || !obj) return { index: -1, total: 0 };
+    
+    const objects = canvas.getObjects();
+    const index = objects.indexOf(obj);
+    return {
+      index: index + 1, // Make it 1-based for UI
+      total: objects.length
+    };
+  };
+
+  // Move object to specific layer
+  const moveToLayer = (layerIndex: number) => {
+    if (!canvas || !selectedObject) return;
+
+    try {
+      const objects = canvas.getObjects();
+      const currentIndex = objects.indexOf(selectedObject);
+      const targetIndex = Math.max(0, Math.min(layerIndex - 1, objects.length - 1)); // Convert to 0-based
+      
+      if (currentIndex !== targetIndex) {
+        canvas.moveTo(selectedObject, targetIndex);
+        canvas.renderAll();
+        saveState();
+        toast.success(`Object moved to layer ${targetIndex + 1}`);
+      }
+    } catch (error) {
+      console.error('Error moving to specific layer:', error);
     }
   };
 
@@ -1102,6 +1193,12 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
             cloneSelected();
           }
           break;
+        case 's':
+          if (isCtrl) {
+            e.preventDefault();
+            saveCurrentProject();
+          }
+          break;
         case 'z':
           if (isCtrl && !e.shiftKey) {
             e.preventDefault();
@@ -1152,15 +1249,21 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
           }
           break;
         case ']':
-          if (isCtrl) {
+          if (isCtrl && e.shiftKey) {
             e.preventDefault();
             bringToFront();
+          } else if (isCtrl) {
+            e.preventDefault();
+            moveUpOneLayer();
           }
           break;
         case '[':
-          if (isCtrl) {
+          if (isCtrl && e.shiftKey) {
             e.preventDefault();
             sendToBack();
+          } else if (isCtrl) {
+            e.preventDefault();
+            moveDownOneLayer();
           }
           break;
         case 't':
@@ -1197,6 +1300,472 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
       return () => document.removeEventListener('click', handleClickOutside);
     }
   }, [contextMenu.show]);
+
+  // Draggable panel handlers
+  const handleLayersPanelMouseDown = (e: React.MouseEvent) => {
+    if (!layersPanel.isDraggable) return;
+    
+    const rect = (e.target as HTMLElement).getBoundingClientRect();
+    setLayersPanel(prev => ({
+      ...prev,
+      isDragging: true,
+      dragOffset: {
+        x: e.clientX - prev.position.x,
+        y: e.clientY - prev.position.y
+      }
+    }));
+  };
+
+  const handleLayersPanelMouseMove = (e: MouseEvent) => {
+    if (!layersPanel.isDragging) return;
+
+    const newX = e.clientX - layersPanel.dragOffset.x;
+    const newY = e.clientY - layersPanel.dragOffset.y;
+
+    // Keep panel within viewport bounds
+    const maxX = window.innerWidth - 300; // panel width
+    const maxY = window.innerHeight - 400; // panel height
+
+    setLayersPanel(prev => ({
+      ...prev,
+      position: {
+        x: Math.max(0, Math.min(newX, maxX)),
+        y: Math.max(0, Math.min(newY, maxY))
+      }
+    }));
+  };
+
+  const handleLayersPanelMouseUp = () => {
+    setLayersPanel(prev => ({ ...prev, isDragging: false }));
+  };
+
+  // Mouse event listeners for dragging
+  useEffect(() => {
+    if (layersPanel.isDragging) {
+      document.addEventListener('mousemove', handleLayersPanelMouseMove);
+      document.addEventListener('mouseup', handleLayersPanelMouseUp);
+      
+      return () => {
+        document.removeEventListener('mousemove', handleLayersPanelMouseMove);
+        document.removeEventListener('mouseup', handleLayersPanelMouseUp);
+      };
+    }
+  }, [layersPanel.isDragging, layersPanel.dragOffset]);
+
+  const toggleLayersPanelMode = () => {
+    setLayersPanel(prev => ({
+      ...prev,
+      isDraggable: !prev.isDraggable,
+      isDragging: false
+    }));
+  };
+
+  // Project management functions
+  const loadProjects = async () => {
+    try {
+      const response = await fetch('/api/invitation-projects');
+      if (response.ok) {
+        const data = await response.json();
+        setProjects(data.projects || []);
+      }
+    } catch (error) {
+      console.error('Error loading projects:', error);
+      toast.error('Failed to load projects');
+    }
+  };
+
+  const saveCurrentProject = async (options: { saveAs?: boolean; name?: string } = {}) => {
+    if (!canvas) return;
+
+    setIsSaving(true);
+    try {
+      // Generate thumbnail
+      const thumbnail = canvas.toDataURL({
+        format: 'png',
+        quality: 0.8,
+        multiplier: 0.2
+      });
+
+      // Prepare design data
+      const designData = {
+        objects: canvas.toJSON(),
+        canvasSize,
+        canvasRotation,
+        textProperties,
+        backgroundProperties,
+        shapeProperties
+      };
+
+      const projectData = {
+        name: options.name || currentProject?.name || 'Untitled Project',
+        designData,
+        canvasWidth: canvasSize.width,
+        canvasHeight: canvasSize.height,
+        canvasRotation,
+        backgroundColor: backgroundProperties.color,
+        backgroundType: backgroundProperties.type,
+        backgroundGradient: backgroundProperties.gradient,
+        thumbnail
+      };
+
+      if (options.saveAs || !currentProject) {
+        // Create new project
+        const response = await fetch('/api/invitation-projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(projectData)
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setCurrentProject(data.project);
+          setHasUnsavedChanges(false);
+          setLastSaved(new Date());
+          toast.success('Project created successfully');
+          loadProjects();
+        } else {
+          throw new Error('Failed to create project');
+        }
+      } else {
+        // Update existing project
+        const response = await fetch(`/api/invitation-projects/${currentProject.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(projectData)
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setCurrentProject(data.project);
+          setHasUnsavedChanges(false);
+          setLastSaved(new Date());
+          toast.success('Project saved successfully');
+          loadProjects();
+        } else {
+          throw new Error('Failed to save project');
+        }
+      }
+    } catch (error) {
+      console.error('Error saving project:', error);
+      toast.error('Failed to save project');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const loadProject = async (projectId: string) => {
+    try {
+      const response = await fetch(`/api/invitation-projects/${projectId}`);
+      if (response.ok) {
+        const data = await response.json();
+        const project = data.project;
+
+        // Load design data into canvas
+        if (project.designData && canvas) {
+          canvas.loadFromJSON(project.designData.objects, () => {
+            canvas.renderAll();
+            
+            // Restore canvas settings
+            setCanvasSize({ width: project.canvasWidth, height: project.canvasHeight });
+            setCanvasRotation(project.canvasRotation);
+            
+            // Restore background
+            setBackgroundProperties({
+              type: project.backgroundType,
+              color: project.backgroundColor,
+              gradient: project.backgroundGradient || backgroundProperties.gradient
+            });
+            
+            // Apply background
+            changeBackground(project.backgroundType, project.backgroundColor);
+            
+            // Restore other properties if available
+            if (project.designData.textProperties) {
+              setTextProperties(project.designData.textProperties);
+            }
+            if (project.designData.shapeProperties) {
+              setShapeProperties(project.designData.shapeProperties);
+            }
+          });
+        }
+
+        setCurrentProject(project);
+        setHasUnsavedChanges(false);
+        setLastSaved(new Date(project.updatedAt));
+        toast.success(`Loaded project: ${project.name}`);
+      } else {
+        throw new Error('Failed to load project');
+      }
+    } catch (error) {
+      console.error('Error loading project:', error);
+      toast.error('Failed to load project');
+    }
+  };
+
+  const createNewProject = async (name: string) => {
+    if (hasUnsavedChanges) {
+      const confirmNew = window.confirm('You have unsaved changes. Create new project anyway?');
+      if (!confirmNew) return;
+    }
+
+    if (!name.trim()) {
+      toast.error('Project name is required');
+      return;
+    }
+
+    // Reset to default state
+    if (canvas) {
+      canvas.clear();
+      addDefaultTemplate(canvas);
+    }
+    
+    setCanvasSize({ width: 600, height: 800 });
+    setCanvasRotation(0);
+    setBackgroundProperties({
+      type: 'color',
+      color: '#ffffff',
+      gradient: {
+        type: 'linear',
+        start: '#ffffff',
+        end: '#f0f0f0',
+        direction: 'to-bottom',
+        x1: 0,
+        y1: 0,
+        x2: 0,
+        y2: 1
+      }
+    });
+    
+    // Save the new project immediately
+    try {
+      setIsSaving(true);
+      
+      // Generate thumbnail
+      const thumbnail = canvas?.toDataURL({
+        format: 'png',
+        quality: 0.8,
+        multiplier: 0.2
+      }) || '';
+
+      // Prepare design data
+      const designData = {
+        objects: canvas?.toJSON() || {},
+        canvasSize: { width: 600, height: 800 },
+        canvasRotation: 0,
+        textProperties,
+        backgroundProperties,
+        shapeProperties
+      };
+
+      const projectData = {
+        name: name.trim(),
+        designData,
+        canvasWidth: 600,
+        canvasHeight: 800,
+        canvasRotation: 0,
+        backgroundColor: '#ffffff',
+        backgroundType: 'color',
+        backgroundGradient: backgroundProperties.gradient,
+        thumbnail
+      };
+
+      console.log('Creating project with data:', projectData);
+
+      const response = await fetch('/api/invitation-projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(projectData)
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setCurrentProject(data.project);
+        setHasUnsavedChanges(false);
+        setLastSaved(new Date());
+        setShowNewProjectForm(false);
+        setNewProjectName('');
+        toast.success(`Project "${name}" created successfully`);
+        loadProjects();
+      } else {
+        // Get the error details from the response
+        const errorData = await response.json().catch(() => ({}));
+        console.error('API Error Details:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData
+        });
+        throw new Error(`Failed to create project: ${response.status} ${response.statusText} - ${errorData.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error creating project:', error);
+      toast.error('Failed to create project');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const deleteProject = async (projectId: string) => {
+    const confirmDelete = window.confirm('Are you sure you want to delete this project? This action cannot be undone.');
+    if (!confirmDelete) return;
+
+    try {
+      const response = await fetch(`/api/invitation-projects/${projectId}`, {
+        method: 'DELETE'
+      });
+
+      if (response.ok) {
+        toast.success('Project deleted successfully');
+        
+        // If we deleted the current project, clear it and show dialog
+        if (currentProject?.id === projectId) {
+          setCurrentProject(null);
+          setShowProjectDialog(true);
+        }
+        
+        loadProjects();
+      } else {
+        throw new Error('Failed to delete project');
+      }
+    } catch (error) {
+      console.error('Error deleting project:', error);
+      toast.error('Failed to delete project');
+    }
+  };
+
+  // Auto-save functionality
+  useEffect(() => {
+    const autoSave = setTimeout(() => {
+      if (currentProject && hasUnsavedChanges && canvas) {
+        saveCurrentProject();
+      }
+    }, 30000); // Auto-save every 30 seconds
+
+    return () => clearTimeout(autoSave);
+  }, [currentProject, hasUnsavedChanges, canvas]);
+
+  // Track changes for unsaved state
+  useEffect(() => {
+    if (canvas && currentProject) {
+      const handleCanvasChange = () => {
+        setHasUnsavedChanges(true);
+      };
+
+      canvas.on('object:added', handleCanvasChange);
+      canvas.on('object:removed', handleCanvasChange);
+      canvas.on('object:modified', handleCanvasChange);
+      canvas.on('path:created', handleCanvasChange);
+
+      return () => {
+        canvas.off('object:added', handleCanvasChange);
+        canvas.off('object:removed', handleCanvasChange);
+        canvas.off('object:modified', handleCanvasChange);
+        canvas.off('path:created', handleCanvasChange);
+      };
+    }
+  }, [canvas, currentProject]);
+
+  // Load projects on component mount
+  useEffect(() => {
+    loadProjects();
+  }, []);
+
+  // Show project dialog when no current project
+  // Load projects on component mount
+  useEffect(() => {
+    loadProjects();
+  }, []);
+
+  // Render layers panel content
+  const renderLayersContent = () => {
+    return (
+      <div className="space-y-2">
+        {canvas?.getObjects()?.length > 0 ? (
+          <div className="space-y-1 max-h-32 overflow-y-auto">
+            {canvas.getObjects().slice().reverse().map((obj: any, reverseIndex: number) => {
+              const actualIndex = canvas.getObjects().length - reverseIndex;
+              const isSelected = selectedObject === obj;
+              const layerInfo = getObjectLayerInfo(obj);
+              
+              return (
+                <div
+                  key={obj.id || reverseIndex}
+                  className={`flex items-center justify-between p-2 rounded text-xs cursor-pointer transition-colors ${
+                    isSelected 
+                      ? 'bg-blue-50 border border-blue-200' 
+                      : 'bg-gray-50 hover:bg-gray-100 border border-transparent'
+                  }`}
+                  onClick={() => {
+                    canvas.setActiveObject(obj);
+                    canvas.renderAll();
+                    setSelectedObject(obj);
+                  }}
+                >
+                  <div className="flex items-center space-x-2">
+                    <span className="text-gray-500 font-mono">{actualIndex}</span>
+                    {obj.type === 'text' && <Type className="w-3 h-3 text-blue-600" />}
+                    {obj.type === 'rect' && <Square className="w-3 h-3 text-green-600" />}
+                    {obj.type === 'circle' && <Circle className="w-3 h-3 text-orange-600" />}
+                    {obj.type === 'triangle' && <Triangle className="w-3 h-3 text-purple-600" />}
+                    {obj.type === 'image' && <ImageIcon className="w-3 h-3 text-pink-600" />}
+                    {obj.type === 'polygon' && <Star className="w-3 h-3 text-yellow-600" />}
+                    <span className="truncate max-w-16">
+                      {obj.type === 'text' 
+                        ? obj.text?.substring(0, 10) + (obj.text?.length > 10 ? '...' : '')
+                        : obj.type?.toUpperCase()
+                      }
+                    </span>
+                    {obj.selectable === false && <Lock className="w-3 h-3 text-gray-400" />}
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    {isSelected && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-4 w-4 p-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveUpOneLayer();
+                          }}
+                          disabled={actualIndex === canvas.getObjects().length}
+                        >
+                          <ChevronUp className="w-3 h-3" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-4 w-4 p-0"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveDownOneLayer();
+                          }}
+                          disabled={actualIndex === 1}
+                        >
+                          <ChevronDown className="w-3 h-3" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-center py-4 text-gray-500 text-xs">
+            No objects on canvas
+          </div>
+        )}
+        
+        <div className="pt-2 border-t border-gray-100">
+          <div className="text-xs text-gray-500 space-y-1">
+            <div>• Higher numbers = front layers</div>
+            <div>• Text auto-added to top</div>
+            <div>• Click to select object</div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   // Helper function to create gradient
   const createGradient = (gradientConfig: any, width: number, height: number) => {
@@ -1437,6 +2006,172 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
     );
   }
 
+  // Show project selection interface when no project is selected
+  if (!currentProject) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-6">
+        <div className="max-w-7xl mx-auto">
+          <div className="mb-8">
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">Invitation Projects</h1>
+            <p className="text-gray-600">Create and manage your invitation card designs</p>
+          </div>
+
+          {/* Create New Project Card */}
+          {!showNewProjectForm ? (
+            <div className="mb-8">
+              <div 
+                className="border-2 border-dashed border-gray-300 rounded-lg p-8 hover:border-gray-400 transition-colors cursor-pointer"
+                onClick={() => setShowNewProjectForm(true)}
+              >
+                <div className="text-center">
+                  <Plus className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+                  <h3 className="text-lg font-medium text-gray-900 mb-2">Create New Project</h3>
+                  <p className="text-gray-500">Start designing a new invitation card</p>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="mb-8">
+              <div className="bg-white rounded-lg border border-gray-200 p-6">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Create New Project</h3>
+                <div className="space-y-4">
+                  <div>
+                    <Label htmlFor="projectName" className="text-sm font-medium text-gray-700">
+                      Project Name
+                    </Label>
+                    <Input
+                      id="projectName"
+                      placeholder="Enter project name..."
+                      value={newProjectName}
+                      onChange={(e) => setNewProjectName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && newProjectName.trim() && !isSaving) {
+                          createNewProject(newProjectName);
+                        } else if (e.key === 'Escape') {
+                          setShowNewProjectForm(false);
+                          setNewProjectName('');
+                        }
+                      }}
+                      className="mt-1"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="flex space-x-3">
+                    <Button 
+                      onClick={() => createNewProject(newProjectName)}
+                      disabled={!newProjectName.trim() || isSaving}
+                      className="flex-1"
+                    >
+                      {isSaving ? (
+                        <div className="w-4 h-4 animate-spin rounded-full border-2 border-white border-t-transparent mr-2" />
+                      ) : (
+                        <Plus className="w-4 h-4 mr-2" />
+                      )}
+                      {isSaving ? 'Creating...' : 'Create Project'}
+                    </Button>
+                    <Button 
+                      variant="outline" 
+                      onClick={() => {
+                        setShowNewProjectForm(false);
+                        setNewProjectName('');
+                      }}
+                      disabled={isSaving}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Projects Grid */}
+          {projects.length > 0 ? (
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900 mb-4">Your Projects</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {projects.map((project) => (
+                  <div 
+                    key={project.id} 
+                    className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow cursor-pointer"
+                    onClick={() => loadProject(project.id)}
+                  >
+                    {/* Project Thumbnail */}
+                    <div className="h-48 bg-gray-100 flex items-center justify-center">
+                      {project.thumbnail ? (
+                        <img 
+                          src={project.thumbnail} 
+                          alt={project.name}
+                          className="max-w-full max-h-full object-contain"
+                        />
+                      ) : (
+                        <div className="text-gray-400 text-center">
+                          <FileText className="w-16 h-16 mx-auto mb-2" />
+                          <span className="text-sm">No Preview</span>
+                        </div>
+                      )}
+                    </div>
+                    
+                    {/* Project Info */}
+                    <div className="p-4">
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-medium text-gray-900 truncate" title={project.name}>
+                            {project.name}
+                          </h3>
+                          {project.description && (
+                            <p className="text-sm text-gray-500 mt-1 line-clamp-2">
+                              {project.description}
+                            </p>
+                          )}
+                          <div className="flex items-center space-x-3 text-xs text-gray-400 mt-3">
+                            <span>{project.canvasWidth}×{project.canvasHeight}</span>
+                            <span>v{project.version}</span>
+                            {project.lastOpenedAt && (
+                              <span>
+                                {new Date(project.lastOpenedAt).toLocaleDateString()}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        
+                        {/* Project Actions */}
+                        <div className="flex items-center space-x-1 ml-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 w-6 p-0"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteProject(project.id);
+                            }}
+                            title="Delete Project"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : !showNewProjectForm && (
+            <div className="text-center py-12">
+              <FileText className="w-20 h-20 mx-auto mb-4 text-gray-300" />
+              <h3 className="text-xl font-medium text-gray-900 mb-2">No Projects Yet</h3>
+              <p className="text-gray-500 mb-4">Create your first invitation project to get started</p>
+              <Button onClick={() => setShowNewProjectForm(true)}>
+                <Plus className="w-4 h-4 mr-2" />
+                Create Your First Project
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div 
       className={containerClasses}
@@ -1486,6 +2221,10 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
                         <div className="flex justify-between">
                           <span>Duplicate object</span>
                           <kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Ctrl+D</kbd>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Save project</span>
+                          <kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Ctrl+S</kbd>
                         </div>
                         <div className="flex justify-between">
                           <span>Delete object</span>
@@ -1543,12 +2282,20 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
                           <kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Ctrl+L</kbd>
                         </div>
                         <div className="flex justify-between">
-                          <span>Bring to front</span>
+                          <span>Move up one layer</span>
                           <kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Ctrl+]</kbd>
                         </div>
                         <div className="flex justify-between">
-                          <span>Send to back</span>
+                          <span>Move down one layer</span>
                           <kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Ctrl+[</kbd>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Bring to front</span>
+                          <kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Ctrl+Shift+]</kbd>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Send to back</span>
+                          <kbd className="px-2 py-1 bg-gray-100 rounded text-xs">Ctrl+Shift+[</kbd>
                         </div>
                       </div>
                     </div>
@@ -1708,6 +2455,32 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
             </TabsContent>
             
             <TabsContent value="properties" className="space-y-4">
+              {/* Layers Panel */}
+              {!layersPanel.isDraggable && (
+                <Card>
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-sm flex items-center justify-between">
+                      <div className="flex items-center">
+                        <Shapes className="w-4 h-4 mr-2" />
+                        Layers ({canvas?.getObjects()?.length || 0})
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={toggleLayersPanelMode}
+                        title="Make draggable"
+                        className="h-6 w-6 p-0"
+                      >
+                        <Expand className="w-3 h-3" />
+                      </Button>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    {renderLayersContent()}
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Canvas Controls */}
               <Card>
                 <CardHeader className="pb-3">
@@ -2128,6 +2901,89 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
                       </div>
                     </div>
 
+                    {/* Layer Management */}
+                    <div>
+                      <Label className="text-xs">Layer Order</Label>
+                      <div className="space-y-2 mt-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-gray-500">
+                            Layer {getObjectLayerInfo(selectedObject).index} of {getObjectLayerInfo(selectedObject).total}
+                          </span>
+                          <div className="flex items-center space-x-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 px-2"
+                              onClick={bringToFront}
+                              title="Bring to Front"
+                            >
+                              <ChevronUp className="w-3 h-3" />
+                              <ChevronUp className="w-3 h-3 -ml-1" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 px-2"
+                              onClick={moveUpOneLayer}
+                              title="Move Up One Layer"
+                            >
+                              <ChevronUp className="w-3 h-3" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 px-2"
+                              onClick={moveDownOneLayer}
+                              title="Move Down One Layer"
+                            >
+                              <ChevronDown className="w-3 h-3" />
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 px-2"
+                              onClick={sendToBack}
+                              title="Send to Back"
+                            >
+                              <ChevronDown className="w-3 h-3" />
+                              <ChevronDown className="w-3 h-3 -ml-1" />
+                            </Button>
+                          </div>
+                        </div>
+                        
+                        <div>
+                          <Label className="text-xs text-gray-500">Move to Layer</Label>
+                          <div className="flex items-center space-x-2 mt-1">
+                            <Input
+                              type="number"
+                              min="1"
+                              max={getObjectLayerInfo(selectedObject).total}
+                              value={getObjectLayerInfo(selectedObject).index}
+                              onChange={(e) => {
+                                const layerIndex = parseInt(e.target.value);
+                                if (!isNaN(layerIndex)) {
+                                  moveToLayer(layerIndex);
+                                }
+                              }}
+                              className="h-6 text-xs"
+                            />
+                            <span className="text-xs text-gray-400">
+                              of {getObjectLayerInfo(selectedObject).total}
+                            </span>
+                          </div>
+                        </div>
+
+                        {selectedObject?.type === 'text' && (
+                          <div className="bg-blue-50 border border-blue-200 rounded p-2">
+                            <div className="flex items-center space-x-2">
+                              <Type className="w-3 h-3 text-blue-600" />
+                              <span className="text-xs text-blue-700">Text is on top layer</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
                     {selectedObject.type === 'image' && (
                       <div>
                         <Label className="text-xs">Image Filters</Label>
@@ -2378,6 +3234,7 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
                             variant="outline"
                             className="h-6 px-2 text-xs"
                             onClick={() => updateShapeProperty('opacity', 0.5)}
+                            
                           >
                             50%
                           </Button>
@@ -2550,6 +3407,24 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
               <Button 
                 size="sm" 
                 variant="outline" 
+                onClick={moveUpOneLayer} 
+                disabled={!selectedObject}
+                title="Move Up One Layer"
+              >
+                <ChevronUp className="w-3 h-3" />
+              </Button>
+              <Button 
+                size="sm" 
+                variant="outline" 
+                onClick={moveDownOneLayer} 
+                disabled={!selectedObject}
+                title="Move Down One Layer"
+              >
+                <ChevronDown className="w-3 h-3" />
+              </Button>
+              <Button 
+                size="sm" 
+                variant="outline" 
                 onClick={sendToBack} 
                 disabled={!selectedObject}
                 title="Send to Back (Ctrl+[)"
@@ -2572,16 +3447,73 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
             </div>
             
             <div className="flex items-center space-x-2">
+              {/* Project Management */}
+              <div className="flex items-center space-x-1 border-r border-gray-300 pr-2 mr-2">
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  onClick={() => {
+                    if (hasUnsavedChanges) {
+                      const confirmNew = window.confirm('You have unsaved changes. Create new project anyway?');
+                      if (!confirmNew) return;
+                    }
+                    setCurrentProject(null);
+                    setShowNewProjectForm(true);
+                  }}
+                  title="New Project"
+                >
+                  <FileText className="w-4 h-4" />
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  onClick={() => {
+                    if (hasUnsavedChanges) {
+                      const confirmOpen = window.confirm('You have unsaved changes. Open projects anyway?');
+                      if (!confirmOpen) return;
+                    }
+                    setCurrentProject(null);
+                    setShowNewProjectForm(false);
+                  }}
+                  title="Open Project"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant={hasUnsavedChanges ? "default" : "outline"}
+                  onClick={() => saveCurrentProject()}
+                  disabled={isSaving}
+                  title={currentProject ? "Save Project" : "Save As New Project"}
+                >
+                  {isSaving ? (
+                    <div className="w-4 h-4 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600" />
+                  ) : (
+                    <Save className="w-4 h-4" />
+                  )}
+                </Button>
+              </div>
+
+              {/* Project Status */}
+              {currentProject && (
+                <div className="text-xs text-gray-600 flex items-center space-x-2">
+                  <span className="font-medium">{currentProject.name}</span>
+                  {hasUnsavedChanges && <span className="text-orange-500">•</span>}
+                  {lastSaved && (
+                    <span className="flex items-center">
+                      <Clock className="w-3 h-3 mr-1" />
+                      {new Date(lastSaved).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  )}
+                </div>
+              )}
+
               {isFullScreen && (
                 <Button size="sm" variant="outline" onClick={toggleFullScreen}>
                   <X className="w-4 h-4 mr-1" />
                   Exit Full Screen
                 </Button>
               )}
-              <Button size="sm" variant="outline" onClick={saveDesign}>
-                <Save className="w-4 h-4 mr-1" />
-                Save
-              </Button>
               <Button size="sm" onClick={exportImage}>
                 <Download className="w-4 h-4 mr-1" />
                 Export
@@ -2714,6 +3646,28 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
               <button
                 className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 flex items-center"
                 onClick={() => {
+                  moveUpOneLayer();
+                  setContextMenu(prev => ({ ...prev, show: false }));
+                }}
+              >
+                <ChevronUp className="w-4 h-4 mr-2" />
+                Move Up One Layer
+              </button>
+
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 flex items-center"
+                onClick={() => {
+                  moveDownOneLayer();
+                  setContextMenu(prev => ({ ...prev, show: false }));
+                }}
+              >
+                <ChevronDown className="w-4 h-4 mr-2" />
+                Move Down One Layer
+              </button>
+
+              <button
+                className="w-full text-left px-3 py-2 text-sm hover:bg-gray-100 flex items-center"
+                onClick={() => {
                   sendToBack();
                   setContextMenu(prev => ({ ...prev, show: false }));
                 }}
@@ -2721,6 +3675,12 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
                 <ChevronDown className="w-4 h-4 mr-2" />
                 Send to Back <span className="ml-auto text-xs text-gray-400">Ctrl+[</span>
               </button>
+
+              {contextMenu.target && (
+                <div className="px-3 py-1 text-xs text-gray-500 border-t border-gray-100 mt-1">
+                  Layer {getObjectLayerInfo(contextMenu.target).index} of {getObjectLayerInfo(contextMenu.target).total}
+                </div>
+              )}
 
               <div className="border-t border-gray-100 my-1"></div>
 
@@ -2801,6 +3761,60 @@ const InvitationDesigner: React.FC<InvitationDesignerProps> = ({
           )}
         </div>
       )}
+
+      {/* Floating Draggable Layers Panel */}
+      {layersPanel.isDraggable && (
+        <div 
+          className={`fixed bg-white rounded-lg shadow-lg border border-gray-200 w-80 z-50 ${
+            layersPanel.isDragging ? 'cursor-grabbing select-none' : 'cursor-auto'
+          }`}
+          style={{
+            left: `${layersPanel.position.x}px`,
+            top: `${layersPanel.position.y}px`,
+          }}
+        >
+          {/* Drag Handle */}
+          <div 
+            className="flex items-center justify-between p-3 bg-gray-50 rounded-t-lg border-b border-gray-200 cursor-grab active:cursor-grabbing"
+            onMouseDown={handleLayersPanelMouseDown}
+          >
+            <div className="flex items-center">
+              <Move3D className="w-4 h-4 mr-2 text-gray-400" />
+              <span className="text-sm font-medium flex items-center">
+                <Shapes className="w-4 h-4 mr-2" />
+                Layers ({canvas?.getObjects()?.length || 0})
+              </span>
+            </div>
+            <div className="flex items-center space-x-1">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={toggleLayersPanelMode}
+                title="Dock to sidebar"
+                className="h-6 w-6 p-0"
+              >
+                <Minimize className="w-3 h-3" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setLayersPanel(prev => ({ ...prev, isDraggable: false }))}
+                title="Close"
+                className="h-6 w-6 p-0"
+              >
+                <X className="w-3 h-3" />
+              </Button>
+            </div>
+          </div>
+          
+          {/* Panel Content */}
+          <div className="p-4 max-h-80 overflow-y-auto">
+            {renderLayersContent()}
+          </div>
+        </div>
+      )}
+
+
     </div>
   );
 };
