@@ -1,0 +1,125 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  clerkId   String   @unique
+  email     String   @unique
+  firstName String?
+  lastName  String?
+  imageUrl  String?
+  role      String   @default("user")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  events   Event[]
+  guests   Guest[]
+  sentMessages SentMessage[]
+
+  @@map("users")
+}
+
+model Event {
+  id          String    @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String?
+  date        DateTime
+  time        String?   // Store time separately for flexibility
+  location    String?
+  createdBy   String    @db.ObjectId
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relations
+  user      User      @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  guests    Guest[]
+  sentMessages SentMessage[]
+
+  @@map("events")
+}
+
+model Guest {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  email     String?
+  phone     String?
+  gender    String? // "male" or "female"
+  invited   Boolean  @default(false)
+  attended  Boolean  @default(false)
+  
+  // New fields for enhanced invitation system
+  status            String   @default("pending") // "pending", "sent", "accepted", "declined"
+  customMessage     String?
+  invitationMethod  String[] @default([]) // ["email", "sms", "whatsapp"]
+  respondedAt       DateTime?
+  rsvpResponse      String? // "yes", "no", "maybe"
+  
+  // Event relationship
+  eventId   String?  @db.ObjectId
+  event     Event?   @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  
+  createdBy String   @db.ObjectId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user         User          @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  sentMessages SentMessage[]
+
+  @@map("guests")
+}
+
+model SentMessage {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  type          String   // "invitation", "reminder", "thank_you"
+  method        String   // "email", "sms", "whatsapp"
+  status        String   @default("pending") // "pending", "sent", "failed", "delivered", "read"
+  
+  // Message content
+  subject       String?
+  content       String
+  
+  // External message IDs for tracking
+  messageId     String?  // External service message ID
+  errorMessage  String?
+  
+  // Recipients
+  recipientEmail String?
+  recipientPhone String?
+  
+  // Relations
+  guestId   String  @db.ObjectId
+  guest     Guest   @relation(fields: [guestId], references: [id], onDelete: Cascade)
+  
+  eventId   String? @db.ObjectId
+  event     Event?  @relation(fields: [eventId], references: [id], onDelete: SetNull)
+  
+  sentBy    String  @db.ObjectId
+  user      User    @relation(fields: [sentBy], references: [id], onDelete: Cascade)
+  
+  sentAt    DateTime @default(now())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("sent_messages")
+}
+
+model Traffic {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  date      DateTime
+  visitors  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("traffic")
+} 
