@@ -1,9 +1,10 @@
 'use client';
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, Users } from 'lucide-react';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useUserSync } from '@/hooks/use-user-sync';
+import { toast } from 'sonner';
 import VorgezSidebar from './Sidebar';
 import Header from './Header';
 import StatsCard from './StatsCard';
@@ -13,9 +14,57 @@ import VisitorTraffic from './VisitorTraffic';
 import GuestList from './GuestList';
 import TemporaryTraffic from './TemporaryTraffic';
 
+interface Guest {
+  id: string;
+  name: string;
+  email?: string | null;
+  phone?: string | null;
+  status: string;
+  rsvpResponse?: string | null;
+  respondedAt?: Date | null;
+  invitationMethod: string[];
+  event?: {
+    id: string;
+    name: string;
+    date: Date;
+    time?: string;
+    location?: string;
+  } | null;
+}
+
 const Dashboard = () => {
   // Ensure user is synced with database
   useUserSync();
+  
+  // Add state for guests
+  const [guests, setGuests] = useState<Guest[] | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  // Fetch guests when component mounts
+  useEffect(() => {
+    const fetchGuests = async () => {
+      try {
+        setIsLoading(true);
+        setError(null);
+        const response = await fetch('/api/guests');
+        if (!response.ok) {
+          throw new Error('Failed to fetch guests');
+        }
+        const data = await response.json();
+        setGuests(data);
+      } catch (err) {
+        console.error('Error fetching guests:', err);
+        const errorMessage = err instanceof Error ? err.message : 'Failed to fetch guests';
+        setError(errorMessage);
+        toast.error("Failed to load guests. Please try again later.");
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchGuests();
+  }, []);
 
   return (
     <SidebarProvider defaultOpen={true}>
@@ -78,7 +127,7 @@ const Dashboard = () => {
               </TabsContent>
               
               <TabsContent value="guests">
-                <GuestList />
+                <GuestList guests={guests} />
               </TabsContent>
               
               <TabsContent value="traffic">

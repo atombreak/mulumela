@@ -10,168 +10,69 @@ export interface SMSInvitation {
   guestName: string;
   eventName: string;
   eventDate: string;
-  eventTime: string;
-  eventLocation?: string;
-  hostName: string;
-  customMessage?: string;
-  rsvpLink?: string;
+  invitationId: string;
 }
 
-export const sendInvitationSMS = async (invitation: SMSInvitation) => {
+export async function sendInvitationSMS(invitation: SMSInvitation) {
   try {
-    if (!process.env.TWILIO_PHONE_NUMBER) {
-      throw new Error('Twilio phone number not configured');
-    }
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+    const rsvpLink = `${baseUrl}/rsvp/${invitation.invitationId}`;
 
-    const message = `🎉 You're Invited! 
-
+    const message = `
 Hi ${invitation.guestName}!
 
-${invitation.hostName} invites you to:
-📅 ${invitation.eventName}
-🗓️ ${invitation.eventDate}
-🕒 ${invitation.eventTime}${invitation.eventLocation ? `\n📍 ${invitation.eventLocation}` : ''}
+You're invited to ${invitation.eventName} on ${invitation.eventDate}!
 
-${invitation.customMessage ? `\n💬 "${invitation.customMessage}"\n` : ''}
+RSVP here: ${rsvpLink}
+`;
 
-${invitation.rsvpLink ? `Please RSVP: ${invitation.rsvpLink}\n` : ''}
+    // Implementation here - integrate with your SMS provider
+    console.log('Sending SMS:', message);
 
-Hope to see you there! 🎊
-
-- Sent via Mulumela`;
-
-    const result = await client.messages.create({
-      body: message,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: invitation.to,
-    });
-
-    return {
-      success: true,
-      messageId: result.sid,
-      error: null
-    };
+    return { success: true };
   } catch (error) {
-    console.error('Failed to send invitation SMS:', error);
-    return {
-      success: false,
-      messageId: null,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    };
+    console.error('Error sending invitation SMS:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
-};
+}
 
-export const sendReminderSMS = async (invitation: SMSInvitation) => {
+export interface SMSReminder {
+  to: string;
+  guestName: string;
+  eventName: string;
+  eventDate: string;
+  invitationId: string;
+}
+
+export async function sendReminderSMS(reminder: SMSReminder) {
   try {
-    if (!process.env.TWILIO_PHONE_NUMBER) {
-      throw new Error('Twilio phone number not configured');
-    }
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000';
+    const rsvpLink = `${baseUrl}/rsvp/${reminder.invitationId}`;
 
-    const message = `⏰ Reminder: ${invitation.eventName} is Tomorrow!
+    const message = `
+Hi ${reminder.guestName}!
 
-Hi ${invitation.guestName},
+This is a reminder for ${reminder.eventName} on ${reminder.eventDate}.
+Please let us know if you can make it!
 
-Don't forget about ${invitation.eventName}!
-🗓️ Tomorrow, ${invitation.eventDate}
-🕒 ${invitation.eventTime}${invitation.eventLocation ? `\n📍 ${invitation.eventLocation}` : ''}
+RSVP here: ${rsvpLink}
+`;
 
-See you there! 🎉
+    // Implementation here - integrate with your SMS provider
+    console.log('Sending reminder SMS:', message);
 
-- ${invitation.hostName}`;
-
-    const result = await client.messages.create({
-      body: message,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: invitation.to,
-    });
-
-    return {
-      success: true,
-      messageId: result.sid,
-      error: null
-    };
+    return { success: true };
   } catch (error) {
-    console.error('Failed to send reminder SMS:', error);
-    return {
-      success: false,
-      messageId: null,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    };
+    console.error('Error sending reminder SMS:', error);
+    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
   }
-};
+}
 
-export const sendThankYouSMS = async (invitation: SMSInvitation, attended: boolean) => {
-  try {
-    if (!process.env.TWILIO_PHONE_NUMBER) {
-      throw new Error('Twilio phone number not configured');
-    }
-
-    const message = attended
-      ? `🙏 Thank you for attending ${invitation.eventName}!
-
-Hi ${invitation.guestName},
-
-Thank you so much for being part of ${invitation.eventName}! It was wonderful having you there.
-
-We hope you enjoyed the event and look forward to seeing you at future events! 🎊
-
-Best regards,
-${invitation.hostName}`
-      : `💙 We missed you at ${invitation.eventName}
-
-Hi ${invitation.guestName},
-
-We missed you at ${invitation.eventName}! We hope everything is well with you.
-
-We'll keep you in mind for future events and hope to see you next time! 🌟
-
-Best regards,
-${invitation.hostName}`;
-
-    const result = await client.messages.create({
-      body: message,
-      from: process.env.TWILIO_PHONE_NUMBER,
-      to: invitation.to,
-    });
-
-    return {
-      success: true,
-      messageId: result.sid,
-      error: null
-    };
-  } catch (error) {
-    console.error('Failed to send thank you SMS:', error);
-    return {
-      success: false,
-      messageId: null,
-      error: error instanceof Error ? error.message : 'Unknown error'
-    };
-  }
-};
-
-// Utility function to format phone number for SMS
-export const formatPhoneForSMS = (phone: string): string => {
+// Helper function to format phone numbers
+export function formatPhoneNumber(phone: string): string {
   // Remove all non-digit characters
   const digitsOnly = phone.replace(/\D/g, '');
   
-  // Add + if not present and number starts with country code
-  if (!phone.startsWith('+')) {
-    if (digitsOnly.length === 10) {
-      // Assume US number, add +1
-      return `+1${digitsOnly}`;
-    } else if (digitsOnly.length > 10) {
-      // Assume international, add +
-      return `+${digitsOnly}`;
-    }
-  }
-  
-  return phone;
-};
-
-// Function to validate phone number format
-export const isValidPhoneNumber = (phone: string): boolean => {
-  const formatted = formatPhoneForSMS(phone);
-  // Basic validation for international phone numbers
-  const phoneRegex = /^\+[1-9]\d{1,14}$/;
-  return phoneRegex.test(formatted);
-}; 
+  // Ensure the number starts with a country code
+  return digitsOnly.startsWith('1') ? digitsOnly : `1${digitsOnly}`;
+} 
